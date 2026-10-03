@@ -1,0 +1,42 @@
+# Environment files (secrets)
+.env
+.env.*
+!.env.example
+
+# Go build artifacts
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Dependency directories
+vendor/
+
+# Test & coverage output
+coverage.out
+coverage.html
+*.prof
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
