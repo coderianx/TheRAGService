@@ -1,7 +1,6 @@
 package middlewares
 
 import (
-	"encoding/json"
 	"log"
 	"net"
 	"net/http"
@@ -9,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"TheRAGService/internal/httpx"
 	"TheRAGService/internal/store"
 
 	"github.com/redis/go-redis/v9"
@@ -58,14 +58,7 @@ func RateLimitByIP(limit int64, window time.Duration) func(http.Handler) http.Ha
 
 			if count > limit {
 				w.Header().Set("Retry-After", strconv.FormatInt(int64(window.Seconds()), 10))
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusTooManyRequests)
-
-				if err := json.NewEncoder(w).Encode(map[string]string{
-					"error": "too many requests",
-				}); err != nil {
-					log.Println("[ERROR] Write JSON response error: ", err)
-				}
+				httpx.WriteError(w, http.StatusTooManyRequests, "too many requests")
 				return
 			}
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	authhandlers "TheRAGService/internal/handlers/auth"
+	"TheRAGService/internal/handlers/rag"
 	"TheRAGService/internal/middlewares"
 	"TheRAGService/internal/store"
 	"fmt"
@@ -31,26 +32,52 @@ func main() {
 	r.Use(middleware.Logger)
 
 	r.Route("/api/v1", func(r chi.Router) {
-		r.With(
-			middlewares.RateLimitByIP(
-				3,
-				time.Minute,
-			),
-		).Post("/register", authhandlers.Register)
+		r.Route("/auth", func(r chi.Router) {
+			r.With(
+				middlewares.RateLimitByIP(
+					3,
+					time.Minute,
+				),
+			).Post("/register", authhandlers.Register)
+
+			r.With(
+				middlewares.RateLimitByIP(
+					5,
+					time.Minute,
+				),
+			).Post("/login", authhandlers.Login)
+
+			r.With(
+				middlewares.RateLimitByIP(
+					5,
+					time.Minute,
+				),
+			).Post("/refresh", authhandlers.Refresh)
+		})
 
 		r.With(
+			middlewares.Auth,
 			middlewares.RateLimitByIP(
-				5,
+				10,
 				time.Minute,
 			),
-		).Post("/login", authhandlers.Login)
+		).Post("/collection", rag.CreateNewCollection)
 
 		r.With(
+			middlewares.Auth,
 			middlewares.RateLimitByIP(
-				5,
+				30,
 				time.Minute,
 			),
-		).Post("/refresh", authhandlers.Refresh)
+		).Get("/collection", rag.MyCollections)
+
+		r.With(
+			middlewares.Auth,
+			middlewares.RateLimitByIP(
+				10,
+				time.Minute,
+			),
+		).Delete("/collection/{collection_id}", rag.DeleteCollection)
 	})
 
 	// Start web server

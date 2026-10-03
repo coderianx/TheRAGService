@@ -62,4 +62,22 @@ func CreateTables() {
 	if err != nil {
 		log.Fatal("[ERROR] Create tables error: ", err)
 	}
+
+	_, err = DB.Exec(
+		context.Background(),
+		`
+		CREATE TABLE IF NOT EXISTS collections (
+			id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+			user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			collection_name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (user_id, collection_name)
+		);
+		`,
+	)
+
+	if err != nil {
+		log.Fatal("[ERROR] Create tables error: ", err)
+	}
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"TheRAGService/internal/helpers"
+	"TheRAGService/internal/httpx"
 	"TheRAGService/internal/models"
 	"TheRAGService/internal/store"
 
@@ -26,19 +27,6 @@ const (
 	refreshTokenTTL = 30 * 24 * time.Hour
 )
 
-type apiError struct {
-	Error string `json:"error"`
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Println("[ERROR] Write JSON response error: ", err)
-	}
-}
-
 func Register(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -46,19 +34,19 @@ func Register(
 	var req models.RegisterReq
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, apiError{Error: "invalid JSON body"})
+		httpx.WriteError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 
 	if req.Username == "" || req.Email == "" || req.Password == "" {
-		writeJSON(w, http.StatusBadRequest, apiError{Error: "username, email and password are required"})
+		httpx.WriteError(w, http.StatusBadRequest, "username, email and password are required")
 		return
 	}
 
 	hashed, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		log.Println("[ERROR] Hash password error: ", err)
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal server error"})
+		httpx.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -80,16 +68,16 @@ func Register(
 		var pgErr *pgconn.PgError
 
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			writeJSON(w, http.StatusConflict, apiError{Error: "username or email already exists"})
+			httpx.WriteError(w, http.StatusConflict, "username or email already exists")
 			return
 		}
 
 		log.Println("[ERROR] Insert user error: ", err)
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal server error"})
+		httpx.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, res)
+	httpx.WriteJSON(w, http.StatusCreated, res)
 }
 
 func Login(
@@ -99,12 +87,12 @@ func Login(
 	var req models.LoginReq
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, apiError{Error: "invalid JSON body"})
+		httpx.WriteError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 
 	if req.Username == "" || req.Password == "" {
-		writeJSON(w, http.StatusBadRequest, apiError{Error: "username and password are required"})
+		httpx.WriteError(w, http.StatusBadRequest, "username and password are required")
 		return
 	}
 
@@ -126,17 +114,17 @@ func Login(
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeJSON(w, http.StatusUnauthorized, apiError{Error: "invalid credentials"})
+			httpx.WriteError(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
 
 		log.Println("[ERROR] Select user error: ", err)
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal server error"})
+		httpx.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
-		writeJSON(w, http.StatusUnauthorized, apiError{Error: "invalid credentials"})
+		httpx.WriteError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 
@@ -144,7 +132,7 @@ func Login(
 
 	if secret == "" {
 		log.Println("[ERROR] JWT_SECRET env is missing")
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal server error"})
+		httpx.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -164,21 +152,18 @@ func Login(
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
 	if err != nil {
 		log.Println("[ERROR] Sign token error: ", err)
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal server error"})
+		httpx.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	randomToken, err := helpers.GenerateRandomString(32)
-
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, apiError{
-			Error: "internal server error",
-		})
+		log.Println("[ERROR] Generate refresh token error: ", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
-	// Save refresh token to Database
-	refreshToken := sha256.Sum256([]byte(randomToken))
+	refreshTokenHash := sha256.Sum256([]byte(randomToken))
 
 	_, err = store.DB.Exec(
 		r.Context(),
@@ -187,17 +172,17 @@ func Login(
 		VALUES ($1, $2, $3)
 		`,
 		userID,
-		hex.EncodeToString(refreshToken[:]),
+		hex.EncodeToString(refreshTokenHash[:]),
 		now.Add(refreshTokenTTL),
 	)
 
 	if err != nil {
 		log.Println("[ERROR] Insert refresh token error: ", err)
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal server error"})
+		httpx.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"access_token":  token,
 		"refresh_token": randomToken,
 	})
@@ -210,12 +195,12 @@ func Refresh(
 	var req models.RefreshReq
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, apiError{Error: "invalid JSON body"})
+		httpx.WriteError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 
 	if req.RefreshToken == "" {
-		writeJSON(w, http.StatusBadRequest, apiError{Error: "refresh_token is required"})
+		httpx.WriteError(w, http.StatusBadRequest, "refresh_token is required")
 		return
 	}
 
@@ -242,12 +227,12 @@ func Refresh(
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeJSON(w, http.StatusUnauthorized, apiError{Error: "invalid refresh token"})
+			httpx.WriteError(w, http.StatusUnauthorized, "invalid refresh token")
 			return
 		}
 
 		log.Println("[ERROR] Select refresh token error: ", err)
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal server error"})
+		httpx.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -261,7 +246,7 @@ func Refresh(
 			log.Println("[ERROR] Delete expired refresh token error: ", err)
 		}
 
-		writeJSON(w, http.StatusUnauthorized, apiError{Error: "refresh token expired"})
+		httpx.WriteError(w, http.StatusUnauthorized, "refresh token expired")
 		return
 	}
 
@@ -269,7 +254,7 @@ func Refresh(
 
 	if secret == "" {
 		log.Println("[ERROR] JWT_SECRET env is missing")
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal server error"})
+		httpx.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -289,14 +274,14 @@ func Refresh(
 	accessToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
 	if err != nil {
 		log.Println("[ERROR] Sign token error: ", err)
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal server error"})
+		httpx.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	randomToken, err := helpers.GenerateRandomString(32)
 	if err != nil {
 		log.Println("[ERROR] Generate refresh token error: ", err)
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal server error"})
+		httpx.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -307,7 +292,7 @@ func Refresh(
 	tx, err := store.DB.Begin(r.Context())
 	if err != nil {
 		log.Println("[ERROR] Begin transaction error: ", err)
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal server error"})
+		httpx.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	defer tx.Rollback(r.Context())
@@ -318,7 +303,7 @@ func Refresh(
 		tokenID,
 	); err != nil {
 		log.Println("[ERROR] Delete refresh token error: ", err)
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal server error"})
+		httpx.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -333,17 +318,17 @@ func Refresh(
 		now.Add(refreshTokenTTL),
 	); err != nil {
 		log.Println("[ERROR] Insert refresh token error: ", err)
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal server error"})
+		httpx.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {
 		log.Println("[ERROR] Commit transaction error: ", err)
-		writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal server error"})
+		httpx.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"access_token":  accessToken,
 		"refresh_token": randomToken,
 	})
